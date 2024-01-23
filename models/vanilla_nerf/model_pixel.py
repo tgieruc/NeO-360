@@ -143,7 +143,7 @@ class PixelNeRF(nn.Module):
         use_viewdirs: bool = True,
         noise_std: float = 0.0,
         lindisp: bool = False,
-        num_src_views: int = 3
+        num_src_views: int = 6
     ):
         for name, value in vars().items():
             if name not in ["self", "__class__"]:
@@ -239,8 +239,8 @@ class PixelNeRF(nn.Module):
             raw_rgb = raw_rgb.reshape(B, N_samples, -1)
             raw_sigma = raw_sigma.reshape(B, N_samples, -1)
 
-            if self.noise_std > 0 and randomized:
-                raw_sigma = raw_sigma + torch.rand_like(raw_sigma) * self.noise_std
+            # if self.noise_std > 0 and randomized:
+            #     raw_sigma = raw_sigma + torch.rand_like(raw_sigma) * self.noise_std
 
             rgb = self.rgb_activation(raw_rgb)
             sigma = self.sigma_activation(raw_sigma)
@@ -279,33 +279,75 @@ class LitPixelNeRF(LitModel):
         eval_inference = self.hparams.render_name
         if eval_inference is not None:
             num = int(eval_inference[0])
-            self.model = PixelNeRF(num_src_views = num)
+            self.model = PixelNeRF(num_src_views = 6)
         elif self.hparams.is_optimize is not None:
             num = int(self.hparams.is_optimize[0])
-            self.model = PixelNeRF(num_src_views = num)
+            self.model = PixelNeRF(num_src_views = 6)
         else:
-            self.model = PixelNeRF()
+            self.model = PixelNeRF(num_src_views = 6)
 
     def setup(self, stage: Optional[str] = None) -> None:
         dataset = dataset_dict[self.hparams.dataset_name]
-        
+
+        if self.hparams.dataset_name == "carla":
+            train_data_loader = dict(
+                pickled = False,
+                # phase = "all",
+                phase = "train",
+                batch_size = 1,
+                shuffle = False,
+                num_workers = 12,
+                # town = ["Town02"],
+                town = ["Town01", "Town03", "Town04", "Town05", "Town06", "Town07", "Town10HD"],
+                weather  = ["ClearNoon"],
+                vehicle = ["vehicle.tesla.invisible"],
+                spawn_point = ["all"],
+                # spawn_point = ["all"],
+                step = [0],
+                selection = ["input_images", "sphere_dataset"],
+                factor = 0.25
+            ),
+            val_data_loader = dict(
+                pickled = False,
+                # phase = "all",
+                phase = "val",
+                batch_size = 1,
+                shuffle = False,
+                num_workers = 12,
+                town = ["Town02"],
+                # town = ["Town01", "Town03", "Town04", "Town05", "Town06", "Town07", "Town10HD"],
+                weather  = ["ClearNoon"],
+                vehicle = ["vehicle.tesla.invisible"],
+                spawn_point = [7, 12, 48, 98, 66],
+                # spawn_point = ["all"],
+                step = [0],
+                selection = ["input_images", "sphere_dataset"],
+                factor = 0.25
+            )
+        else:
+            train_data_loader = None
+            val_data_loader = None
+    
         kwargs_train = {'root_dir': self.hparams.root_dir,
                             'img_wh': tuple(self.hparams.img_wh),
                             'white_back': self.hparams.white_back,
                             'model_type': 'pixelnerf',
-                            'optimize': self.hparams.is_optimize}
+                            'optimize': self.hparams.is_optimize,
+                            'dataset_config': train_data_loader}
         kwargs_val = {'root_dir': self.hparams.root_dir,
                         'img_wh': tuple(self.hparams.img_wh),
                             'white_back': self.hparams.white_back,
                             'model_type': 'pixelnerf',
-                            'optimize': self.hparams.is_optimize}
+                            'optimize': self.hparams.is_optimize,
+                            'dataset_config': val_data_loader}
 
         if self.hparams.run_eval:        
             kwargs_test = {'root_dir': self.hparams.root_dir,
                         'img_wh': tuple(self.hparams.img_wh),
                             'white_back': self.hparams.white_back,
                             'model_type': 'pixelnerf',
-                            'eval_inference': self.hparams.render_name}
+                            'eval_inference': self.hparams.render_name,
+                            'dataset_config': val_data_loader}
                             # 'eval_inference': None}
             self.test_dataset = dataset(split='val', **kwargs_test)
             self.near = self.test_dataset.near
@@ -419,9 +461,9 @@ class LitPixelNeRF(LitModel):
 
         test_output = {}
         test_output["target"] = batch["target"]
-        test_output["inst_seg_mask"] = batch["inst_seg_mask"]
+        # test_output["inst_seg_mask"] = batch["inst_seg_mask"]
         test_output["depth"] = ret["depth"]
-        test_output["instance_mask"] = batch["instance_mask"]
+        # test_output["instance_mask"] = batch["instance_mask"]
         test_output["rgb"] = ret["comp_rgb"]
         return test_output
 
@@ -514,7 +556,11 @@ class LitPixelNeRF(LitModel):
                           pin_memory=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_dataset,
+        if self.val_dataset:
+            dataset = self.val_dataset
+        else:
+            dataset= self.test_dataset
+        return DataLoader(dataset,
                           shuffle=False,
                           num_workers=4,
                           batch_size=1, # validate one image (H*W rays) at a time
@@ -544,13 +590,13 @@ class LitPixelNeRF(LitModel):
         #     else dmodule.test_image_sizes
         # )
         rgbs = self.alter_gather_cat(outputs, "rgb", all_image_sizes)
-        instance_masks = self.alter_gather_cat(outputs, "instance_mask", all_image_sizes)
+        # instance_masks = self.alter_gather_cat(outputs, "instance_mask", all_image_sizes)
         # inst_seg_masks = self.alter_gather_cat(outputs, "inst_seg_mask", all_image_sizes)
         targets = self.alter_gather_cat(outputs, "target", all_image_sizes)
 
         # all_obj_rgbs, all_target_rgbs = get_obj_rgbs_from_instmask(inst_seg_masks, rgbs, targets)
         depths = self.alter_gather_cat(outputs, "depth", all_image_sizes)
-        all_obj_rgbs, all_target_rgbs = get_obj_rgbs_from_segmap(instance_masks, rgbs, targets)
+        # all_obj_rgbs, all_target_rgbs = get_obj_rgbs_from_segmap(instance_masks, rgbs, targets)
         # obj_rgbs = self.
         # psnr = self.psnr(rgbs, targets, dmodule.i_train, dmodule.i_val, dmodule.i_test)
         # ssim = self.ssim(rgbs, targets, dmodule.i_train, dmodule.i_val, dmodule.i_test)
@@ -566,14 +612,14 @@ class LitPixelNeRF(LitModel):
 
         print("psnr, ssim, lpips scene", psnr, ssim, lpips)
 
-        psnr_obj = self.psnr(all_obj_rgbs, all_target_rgbs, None, None, None)
-        print("psnr obj", psnr_obj)
+        # psnr_obj = self.psnr(all_obj_rgbs, all_target_rgbs, None, None, None)
+        # print("psnr obj", psnr_obj)
 
         self.log("test/psnr", psnr["test"], on_epoch=True)
         self.log("test/ssim", ssim["test"], on_epoch=True)
         self.log("test/lpips", lpips["test"], on_epoch=True)
 
-        self.log("test/psnr_obj", psnr_obj["test"], on_epoch=True)
+        # self.log("test/psnr_obj", psnr_obj["test"], on_epoch=True)
         # self.log("test/ssim_obj", ssim_obj["test"], on_epoch=True)
         # self.log("test/lpips_obj", lpips_obj["test"], on_epoch=True)
 
@@ -591,6 +637,6 @@ class LitPixelNeRF(LitModel):
             store_depth_raw(image_dir, depths, 'depth_raw_img')
 
             result_path = os.path.join("ckpts",self.hparams.exp_name, "results.json")
-            self.write_stats(result_path, psnr, ssim, lpips, psnr_obj)
+            self.write_stats(result_path, psnr, ssim, lpips)
 
         return psnr, ssim, lpips

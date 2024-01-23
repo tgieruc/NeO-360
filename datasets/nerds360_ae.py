@@ -138,23 +138,25 @@ def read_poses(pose_dir_train, img_files_train, output_boxes=False, contract=Tru
     with open(pose_file_train, "r") as read_content:
         data = json.load(read_content)
 
-    focal = data["focal"]
-    img_wh = data["img_size"]
-    obj_location = np.array(data["obj_location"])
+    focal = data["focal"] #381
+    img_wh = data["img_size"] # 640, 480
+    obj_location = np.array(data["obj_location"]) #array([ -49.31199272, -151.14929095,    5.95165538])
     all_c2w_train = []
 
+
+    # load c2w for all imgs
     for img_file in img_files_train:
         c2w = np.array(data["transform"][img_file.split(".")[0]])
         c2w[:3, 3] = c2w[:3, 3] - obj_location
         all_c2w_train.append(convert_pose_PD_to_NeRF(c2w))
 
-    all_c2w_train = np.array(all_c2w_train)
+    all_c2w_train = np.array(all_c2w_train) # (199,4,4)
     pose_scale_factor = 1.0 / np.max(np.abs(all_c2w_train[:, :3, 3]))
 
-    all_c2w_train[:, :3, 3] *= pose_scale_factor
+    all_c2w_train[:, :3, 3] *= pose_scale_factor # normalize pose 
 
-    all_c2w_val = all_c2w_train[100:]
-    all_c2w_train = all_c2w_train[:100]
+    all_c2w_val = all_c2w_train[100:] # first 100 for val
+    all_c2w_train = all_c2w_train[:100] # last 100 for train
     # Get bounding boxes for object MLP training only
     use_pred_box = False
     if output_boxes:
@@ -225,6 +227,7 @@ class NeRDS360_AE(Dataset):
         encoder_type="resnet",
         contract=True,
         finetune_lpips=False,
+        **kwargs,
     ):
         self.split = split
         self.img_wh = img_wh
@@ -237,7 +240,7 @@ class NeRDS360_AE(Dataset):
         self.encoder_type = encoder_type
         self.contract = contract
         self.finetune_lpips = finetune_lpips
-
+        self.num_src_views = 19
         # for multi scene training
         if self.encoder_type == "resnet":
             self.img_transform = T.Compose(
@@ -304,9 +307,9 @@ class NeRDS360_AE(Dataset):
             all_c2w_train, all_c2w_val, focal, img_size, self.RTs, _ = read_poses(
                 pose_dir_train, img_files_train, output_boxes=True, contract=contract
             )
-            all_c2w = np.concatenate((all_c2w_train, all_c2w_val), axis=0)
-            img_files = img_files_train
-            base_dir = base_dir_train
+            all_c2w = np.concatenate((all_c2w_train, all_c2w_val), axis=0) #(199,4,4)
+            img_files = img_files_train # list of img_name
+            base_dir = base_dir_train  #'/app/code/NeO-360/data/PDMultiObjv6/train/SF_6thAndMission_medium0/train'
         else:
             # _, _, focal, img_size, self.RTs, poses_scale_factor = read_poses(
             #     pose_dir_train, img_files_train, output_boxes=True, contract=contract
@@ -332,15 +335,14 @@ class NeRDS360_AE(Dataset):
             img_files = img_files_test
             base_dir = base_dir_test
 
-        w, h = self.img_wh
+        w, h = self.img_wh #(320,240)
         focal *= w / img_size[0]  # modify focal length to match size self.img_wh
+        # focal before: 381 -> 190 now
+        c = np.array([640 / 2.0, 480 / 2.0]) # 320,240
+        c *= w / img_size[0] # *0.5 -> array([160., 120.])
 
-        c = np.array([640 / 2.0, 480 / 2.0])
-        c *= w / img_size[0]
-
-        img_name = img_files[image_id]
-
-        c2w = all_c2w[image_id]
+        img_name = img_files[image_id] #'compact_mini_01_body-181.png'
+        c2w = all_c2w[image_id] #(4,4)
 
         if out_src_view:
             if self.split == "train":
@@ -512,8 +514,8 @@ class NeRDS360_AE(Dataset):
 
     def __getitem__(self, idx):
         if self.split == "train":  # use data in the buffers
-            train_idx = random.randint(0, len(self.ids) - 1)
-            instance_dir = self.ids[train_idx]
+            train_idx = random.randint(0, len(self.ids) - 1) #single number
+            instance_dir = self.ids[train_idx] #SF_VanNessAveAndTurkSt23 for example
 
             imgs = list()
             poses = list()
@@ -530,7 +532,7 @@ class NeRDS360_AE(Dataset):
             radii = list()
 
             NV = 100
-            src_views = 3
+            src_views = self.num_src_views
             if self.encoder_type == "resnet":
                 ray_batch_size = 500
             else:
@@ -556,14 +558,14 @@ class NeRDS360_AE(Dataset):
                 # src_views_num = src_views_num[:a]
 
             else:
-                src_views_num = np.random.choice(100, src_views, replace=False)
+                src_views_num = np.random.choice(100, src_views, replace=False) # random 6 indexes between 0 and 100
                 views = [i for i in range(0, 100)]
                 a = list(set(views) - set(src_views_num))
                 # for training without LPIPS
                 if self.finetune_lpips:
                     dest_view_num = random.sample(a, 1)[0]
                 else:
-                    dest_view_nums = random.sample(a, 20)
+                    dest_view_nums = random.sample(a, 20) # 20 indexes between (0,100), excluding src_views_num
             # for finetune_LPIPS
             # dest_view_num = random.sample(a, 1)[0]
 
@@ -720,17 +722,17 @@ class NeRDS360_AE(Dataset):
                     rgbs.append(rgb_gt)
                     radii.append(radii_gt)
 
-                rgbs = torch.stack(rgbs, 0)
-                masks = torch.stack(masks, 0)
-                nocs_2ds = torch.stack(nocs_2ds, 0)
-                rays = torch.stack(rays, 0)
-                rays_d = torch.stack(rays_d, 0)
-                view_dirs = torch.stack(view_dirs, 0)
-                radii = torch.stack(radii, 0)
+                rgbs = torch.stack(rgbs, 0)  # (20, 76800, 3)
+                masks = torch.stack(masks, 0) # (20, 76800, 1)
+                nocs_2ds = torch.stack(nocs_2ds, 0) # (20, 76800, 3)
+                rays = torch.stack(rays, 0) # (20, 76800, 3)
+                rays_d = torch.stack(rays_d, 0) # (20, 76800, 3)
+                view_dirs = torch.stack(view_dirs, 0) # (20, 76800, 3)
+                radii = torch.stack(radii, 0) # (20, 76800)
 
                 pix_inds = torch.randint(
                     0, len(dest_view_nums) * H * W, (ray_batch_size,)
-                )
+                ) # (500), between 0 and 20*76800
                 rgbs = rgbs.reshape(-1, 3)[pix_inds, ...]
                 nocs_2ds = nocs_2ds.reshape(-1, 3)[pix_inds, ...]
                 masks = masks.reshape(-1, 1)[pix_inds]
@@ -747,17 +749,17 @@ class NeRDS360_AE(Dataset):
                 }
             else:
                 sample = {}
-                sample["src_imgs"] = imgs
-                sample["src_poses"] = poses
-                sample["src_focal"] = focals
-                sample["src_c"] = all_c
-                sample["instance_mask"] = masks
-                sample["rays_o"] = rays
-                sample["rays_d"] = rays_d
-                sample["viewdirs"] = view_dirs
-                sample["target"] = rgbs
-                sample["nocs_2d"] = nocs_2ds
-                sample["radii"] = radii
+                sample["src_imgs"] = imgs # (6,3,240,320) [-1->1]
+                sample["src_poses"] = poses # (6,4,4)
+                sample["src_focal"] = focals # [190] * 6
+                sample["src_c"] = all_c # [160., 120.] * 6
+                sample["instance_mask"] = masks #(500,1)
+                sample["rays_o"] = rays # (500,3)
+                sample["rays_d"] = rays_d # (500,3)
+                sample["viewdirs"] = view_dirs# (500,3)
+                sample["target"] = rgbs# (500,3) [0->1]
+                sample["nocs_2d"] = nocs_2ds # (500,3)
+                sample["radii"] = radii # [0.0030] * 500
                 sample["multloss"] = torch.zeros((sample["rays_o"].shape[0], 1))
                 sample["normals"] = torch.zeros_like(sample["rays_o"])
 
@@ -775,7 +777,7 @@ class NeRDS360_AE(Dataset):
             focals = list()
             all_c = list()
             NV = 199
-            src_views = 3
+            src_views = self.num_src_views
 
             if self.eval_inference is not None:
                 num = int(self.eval_inference[0])
@@ -802,24 +804,24 @@ class NeRDS360_AE(Dataset):
 
                     dest_view_num = np.random.randint(0, 99) + 100
                 else:
-                    src_views_num = np.random.choice(100, src_views, replace=False)
+                    src_views_num = np.random.choice(100, src_views, replace=False)  #array([83, 12, 53, 94, 88, 86])
                     # src_views_num = [0, 38, 44]
 
                     # src_views_num = [8, 91, 67]
                     views = [i for i in range(0, 99)]
-                    a = list(set(views) - set(src_views_num))
-                    dest_view_num = random.sample(a, 1)[0] + 100
+                    a = list(set(views) - set(src_views_num)) # 0 -> 99 without src_views_num
+                    dest_view_num = random.sample(a, 1)[0] + 100 #110 for example
 
-            # Load desitnation view data
+            # Load desitnation view data (#110 for example)
             (
-                cam_rays,
-                cam_view_dirs,
-                cam_rays_d,
-                img_gt,
-                instance_mask,
-                inst_seg,
-                nocs_2d,
-                camera_radii,
+                cam_rays, #76800,3
+                cam_view_dirs, # 7800,3, normalized ||view_dir||=1
+                cam_rays_d, #7800,3, also normalized, same as view_dirs
+                img_gt, # PIL img, 320x240
+                instance_mask, #(1,240,320), boolean
+                inst_seg, # (1,240,320), int32
+                nocs_2d, # PIl img, 320x240
+                camera_radii, # [0.0030] * 76800
                 _,
                 _,
                 _,
@@ -878,18 +880,18 @@ class NeRDS360_AE(Dataset):
                 }
             else:
                 sample = {}
-                sample["src_imgs"] = imgs
-                sample["src_poses"] = poses
-                sample["src_focal"] = focals
-                sample["instance_mask"] = masks
-                sample["inst_seg_mask"] = inst_seg_masks
-                sample["src_c"] = all_c
-                sample["rays_o"] = rays
-                sample["rays_d"] = rays_d
-                sample["viewdirs"] = view_dirs
-                sample["target"] = rgbs
-                sample["nocs_2d"] = nocs_2ds
-                sample["radii"] = radii
+                sample["src_imgs"] = imgs # (6,3,240,320)
+                sample["src_poses"] = poses # (6,4,4)
+                sample["src_focal"] = focals # (6) tensor([190.6806, 190.6806, 190.6806, 190.6806, 190.6806, 190.6806])
+                sample["instance_mask"] = masks # (76800,1)
+                sample["inst_seg_mask"] = inst_seg_masks # (76800,1)
+                sample["src_c"] = all_c # (6,2) [160,120] * 6
+                sample["rays_o"] = rays # (76800,3)
+                sample["rays_d"] = rays_d # (76800,3)
+                sample["viewdirs"] = view_dirs # (76800,3) (equal to rays_d)
+                sample["target"] = rgbs # (76800,3) [0->1]
+                sample["nocs_2d"] = nocs_2ds # (76800,3)
+                sample["radii"] = radii # [0.0030] * 76800
                 sample["multloss"] = torch.zeros((sample["rays_o"].shape[0], 1))
                 sample["normals"] = torch.zeros_like(sample["rays_o"])
 
@@ -907,7 +909,7 @@ class NeRDS360_AE(Dataset):
             all_c = list()
             NV = 99
             # NV = 40
-            src_views = 3
+            src_views = self.num_src_views
 
             if self.eval_inference is not None:
                 num = int(self.eval_inference[0])

@@ -164,6 +164,11 @@ def main(hparams):
         else:
             ckpt_path = f"ckpts/{hparams.exp_name}/last.ckpt"
         trainer.test(system, ckpt_path=ckpt_path)
+    elif hparams.run_eval:
+        trainer.test(system, ckpt_path=hparams.ckpt_path)
+    elif hparams.ckpt_path:
+        trainer.fit(system, ckpt_path=hparams.ckpt_path)
+
     else:
         trainer.fit(system)
 

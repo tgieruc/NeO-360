@@ -16,7 +16,8 @@ def get_opts():
         default="blender",
         choices=[
             "nerds360",
-            "nerds360_ae"
+            "nerds360_ae",
+            "carla"
         ],
         help="which dataset to train/val",
     )
@@ -122,7 +123,7 @@ def get_opts():
         "--splits", type=str, default=None, help="which category to use"
     )
 
-    # parser.add_argument("--run_eval", default=False, action="store_true")
+    parser.add_argument("--run_eval", default=False, action="store_true")
     parser.add_argument("--eval_mode", default=None, type=str)
     # options "full_eval", "vis_only"
 
