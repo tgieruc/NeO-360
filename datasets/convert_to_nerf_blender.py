@@ -96,14 +96,19 @@ if __name__ == '__main__':
 
 
     transforms_data = {
-        "camera_angle_x": fov,
+        "fl_x": focal,
+        "fl_y": focal,
+        "h": H,
+        "w": W,
+        "cx": W/2,
+        "cy": H/2,
         "frames": []
     }
 
     output_file = os.path.join(base_dir, "transforms_train.json")
     for c2w, img_file in zip(all_c2w, img_files):
         frame_data = {
-            "file_path": os.path.join("./", "train", "rgb", img_file.split('.')[0]),
+            "file_path": os.path.join("./", "train", "rgb", img_file),
             "transform_matrix": np.array(c2w).tolist()
         }
         transforms_data["frames"].append(frame_data)

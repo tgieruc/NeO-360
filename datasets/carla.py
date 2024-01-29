@@ -7,131 +7,12 @@ from PIL import Image
 from torchvision import transforms as T
 from .ray_utils import *
 import random
-import cv2
 
-
-def rot_from_origin(c2w, rotation=10):
-    rot = c2w[:3, :3]
-    pos = c2w[:3, -1:]
-    rot_mat = get_rotation_matrix(rotation)
-    pos = torch.mm(rot_mat, pos)
-    rot = torch.mm(rot_mat, rot)
-    c2w = torch.cat((rot, pos), -1)
-    return c2w
-
-
-def get_rotation_matrix(rotation):
-    phi = rotation * (np.pi / 180.0)
-    x = np.random.uniform(-phi, phi)
-    y = np.random.uniform(-phi, phi)
-    z = np.random.uniform(-phi, phi)
-
-    rot_x = torch.Tensor(
-        [[1, 0, 0], [0, np.cos(x), -np.sin(x)], [0, np.sin(x), np.cos(x)]]
-    )
-    rot_y = torch.Tensor(
-        [[np.cos(y), 0, -np.sin(y)], [0, 1, 0], [np.sin(y), 0, np.cos(y)]]
-    )
-    rot_z = torch.Tensor(
-        [
-            [np.cos(z), -np.sin(z), 0],
-            [np.sin(z), np.cos(z), 0],
-            [0, 0, 1],
-        ]
-    )
-    rot_mat = torch.mm(rot_x, torch.mm(rot_y, rot_z))
-    return rot_mat
 
 
 TINY_NUMBER = 1e-6  # float32 only has 7 decimal digits precision
 
 
-def angular_dist_between_2_vectors(vec1, vec2):
-    vec1_unit = vec1 / (np.linalg.norm(vec1, axis=1, keepdims=True) + TINY_NUMBER)
-    vec2_unit = vec2 / (np.linalg.norm(vec2, axis=1, keepdims=True) + TINY_NUMBER)
-    angular_dists = np.arccos(
-        np.clip(np.sum(vec1_unit * vec2_unit, axis=-1), -1.0, 1.0)
-    )
-    return angular_dists
-
-
-def batched_angular_dist_rot_matrix(R1, R2):
-    """
-    calculate the angular distance between two rotation matrices (batched)
-    :param R1: the first rotation matrix [N, 3, 3]
-    :param R2: the second rotation matrix [N, 3, 3]
-    :return: angular distance in radiance [N, ]
-    """
-    assert (
-        R1.shape[-1] == 3
-        and R2.shape[-1] == 3
-        and R1.shape[-2] == 3
-        and R2.shape[-2] == 3
-    )
-    return np.arccos(
-        np.clip(
-            (np.trace(np.matmul(R2.transpose(0, 2, 1), R1), axis1=1, axis2=2) - 1)
-            / 2.0,
-            a_min=-1 + TINY_NUMBER,
-            a_max=1 - TINY_NUMBER,
-        )
-    )
-
-
-def get_nearest_pose_ids(
-    tar_pose,
-    ref_poses,
-    num_select=4,
-    tar_id=-1,
-    angular_dist_method="vector",
-    scene_center=(0, 0, 0),
-):
-    """
-    Args:
-        tar_pose: target pose [3, 3]
-        ref_poses: reference poses [N, 3, 3]
-        num_select: the number of nearest views to select
-    Returns: the selected indices
-    """
-    num_cams = len(ref_poses)
-    num_select = min(num_select, num_cams - 1)
-    batched_tar_pose = tar_pose[None, ...].repeat(num_cams, 0)
-
-    if angular_dist_method == "matrix":
-        dists = batched_angular_dist_rot_matrix(
-            batched_tar_pose[:, :3, :3], ref_poses[:, :3, :3]
-        )
-    elif angular_dist_method == "vector":
-        tar_cam_locs = batched_tar_pose[:, :3, 3]
-        ref_cam_locs = ref_poses[:, :3, 3]
-        scene_center = np.array(scene_center)[None, ...]
-        tar_vectors = tar_cam_locs - scene_center
-        ref_vectors = ref_cam_locs - scene_center
-        dists = angular_dist_between_2_vectors(tar_vectors, ref_vectors)
-    elif angular_dist_method == "dist":
-        tar_cam_locs = batched_tar_pose[:, :3, 3]
-        ref_cam_locs = ref_poses[:, :3, 3]
-        dists = np.linalg.norm(tar_cam_locs - ref_cam_locs, axis=1)
-    else:
-        raise Exception("unknown angular distance calculation method!")
-
-    if tar_id >= 0:
-        assert tar_id < num_cams
-        dists[tar_id] = 1e3  # make sure not to select the target id itself
-
-    sorted_ids = np.argsort(dists)
-    selected_ids = sorted_ids[:num_select]
-    # print(angular_dists[selected_ids] * 180 / np.pi)
-    return selected_ids
-
-def move_camera_pose(pose, progress):
-    # control the camera move (spiral pose)
-    t = progress * np.pi * 4
-    radii = 0.03
-    # radii = 0
-    center = np.array([np.cos(t), -np.sin(t), -np.sin(0.5 * t)]) * radii
-    pose[:3, 3] += pose[:3, :3] @ center
-    return pose
 
 
 def read_poses(transform_file, idx=None):
@@ -161,24 +42,24 @@ def read_poses(transform_file, idx=None):
             img_paths.append(os.path.join(os.path.dirname(transform_file), frame['file_path']))
 
     all_c2w = np.array(all_c2w)
-    all_c2w[:, 0:3, 1:3] *= -1
+    # all_c2w[:, 0:3, 1:3] *= -1
     all_c2w[:, :3, 3] *= 0.1
 
-    rot_y = np.array([[0,0,1,0],[0,1,0,0],[-1,0,0,0],[0,0,0,1]])
+    # rot_y = np.array([[0,0,1,0],[0,1,0,0],[-1,0,0,0],[0,0,0,1]])
 
-    all_c2w = np.matmul(rot_y, all_c2w) #(N,4,4)
+    # all_c2w = np.matmul(rot_y, all_c2w) #(N,4,4)
 
-    rot = np.array([[-1, 0, 0, 0],
-                      [0, 1, 0, 0],
-                      [0, 0, -1, 0],
-                      [0, 0, 0, 1]]).T
+    # rot = np.array([[-1, 0, 0, 0],
+    #                   [0, 1, 0, 0],
+    #                   [0, 0, -1, 0],
+    #                   [0, 0, 0, 1]]).T
 
-    rot = rot @ np.array([[-1, 0, 0, 0],
-                      [0, -1, 0, 0],
-                      [0, 0, 1, 0],
-                      [0, 0, 0, 1]]).T
+    # rot = rot @ np.array([[-1, 0, 0, 0],
+    #                   [0, -1, 0, 0],
+    #                   [0, 0, 1, 0],
+    #                   [0, 0, 0, 1]]).T
     
-    all_c2w = np.matmul(all_c2w, rot)
+    # all_c2w = np.matmul(all_c2w, rot)
 
     return all_c2w, focal, img_wh, img_paths
 
@@ -332,7 +213,7 @@ class Carla(Dataset):
         all_superv_radii = []
 
         for c2w in superv_c2w:
-            rays_o, view_dirs, rays_d, radii = get_rays(
+            rays_o, view_dirs, rays_d, radii = get_rays( 
                 superv_directions, c2w, output_view_dirs=True, output_radii=True
             )
             all_superv_rays_o.append(rays_o)
@@ -502,7 +383,7 @@ class Carla(Dataset):
                 cam_rays_d = torch.FloatTensor(rays_d)
                 rgbs = []
                 for superv_img in superv_imgs:
-                    img_gt = Image.fromarray(np.uint8(superv_imgs[0]))
+                    img_gt = Image.fromarray(np.uint8(superv_img))
                     img_gt = T.ToTensor()(img_gt)
                     rgb = img_gt.permute(1, 2, 0).flatten(0, 1)[...,:3]
                     rgbs.append(rgb)
@@ -579,13 +460,13 @@ class Carla(Dataset):
             cam_rays_d = torch.FloatTensor(rays_d)
 
             img_gt = Image.fromarray(np.uint8(superv_imgs[0]))
-            img_gt = T.ToTensor()(img_gt)
-            rgbs = img_gt.permute(1, 2, 0).flatten(0, 1)[...,:3]
+            img_gt = T.ToTensor()(img_gt) # 4,600,800
+            rgbs = img_gt.permute(1, 2, 0)[...,:3].view(-1,3)
 
             radii = camera_radii.view(-1)
-            rays = cam_rays.view(-1, cam_rays.shape[-1])
-            rays_d = cam_rays_d.view(-1, cam_rays_d.shape[-1])
-            view_dirs = cam_view_dirs.view(-1, cam_view_dirs.shape[-1])
+            rays = cam_rays.view(-1, 3)
+            rays_d = cam_rays_d.view(-1, 3)
+            view_dirs = cam_view_dirs.view(-1, 3)
 
             imgs = []
             for img in src_imgs:

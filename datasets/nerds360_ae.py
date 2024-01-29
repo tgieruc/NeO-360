@@ -884,12 +884,12 @@ class NeRDS360_AE(Dataset):
                 sample["src_poses"] = poses # (6,4,4)
                 sample["src_focal"] = focals # (6) tensor([190.6806, 190.6806, 190.6806, 190.6806, 190.6806, 190.6806])
                 sample["instance_mask"] = masks # (76800,1)
-                sample["inst_seg_mask"] = inst_seg_masks # (76800,1)
-                sample["src_c"] = all_c # (6,2) [160,120] * 6
+                sample["inst_seg_mask"] = inst_seg_masks # (76800,1) # h*w.1
+                sample["src_c"] = all_c # (6,2) [160,120] * 6 # w/2, h/2
                 sample["rays_o"] = rays # (76800,3)
                 sample["rays_d"] = rays_d # (76800,3)
                 sample["viewdirs"] = view_dirs # (76800,3) (equal to rays_d)
-                sample["target"] = rgbs # (76800,3) [0->1]
+                sample["target"] = rgbs # (76800,3) [0->1] # cv2.imwrite("test.png", sample["target"].view(240,320,3).numpy() * 255 )
                 sample["nocs_2d"] = nocs_2ds # (76800,3)
                 sample["radii"] = radii # [0.0030] * 76800
                 sample["multloss"] = torch.zeros((sample["rays_o"].shape[0], 1))
