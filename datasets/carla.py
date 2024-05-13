@@ -178,12 +178,15 @@ class Carla(Dataset):
         instance_dir,
         idx=None
     ):
-        src_dir = os.path.join(instance_dir['sphere'], "transforms/transforms_ego_train.json")
+        src_dir = os.path.join(instance_dir['nuscenes'], "transforms/transforms_ego.json")
         split = "test" if self.split =="val" else self.split
-        superv_dir = os.path.join(instance_dir['sphere'], f"transforms/transforms_ego_{split}.json")
+        if self.dataset_config["phase"] == "full":
+            superv_dir = os.path.join(instance_dir['sphere'], f"transforms/transforms_ego.json")
+        else:
+            superv_dir = os.path.join(instance_dir['sphere'], f"transforms/transforms_ego_{split}.json")
 
 
-        src_c2w, src_focal, src_img_wh, src_img_paths = read_poses(src_dir, idx=np.random.choice(80, self.num_src_views, replace=False))
+        src_c2w, src_focal, src_img_wh, src_img_paths = read_poses(src_dir)
         superv_c2w, superv_focal, superv_img_wh, superv_img_paths = read_poses(superv_dir, idx=idx)
         
 
@@ -249,13 +252,13 @@ class Carla(Dataset):
             # return len(self.ids)
         elif self.split == "val":
             if self.eval_inference is not None:
-                return len(self.data) * 99
+                return len(self.data) 
                 # return 3
             else:
                 return len(self.data)
         else:
             if self.eval_inference is not None:
-                return len(self.data) * 99
+                return len(self.data) 
                 # return 40
                 # return 3
             else:
@@ -278,9 +281,9 @@ class Carla(Dataset):
             # radii = list()
 
             if self.encoder_type == "resnet":
-                ray_batch_size = 800
+                ray_batch_size = 500
             else:
-                ray_batch_size = 800
+                ray_batch_size = 500
 
             if self.optimize is not None or self.finetune_lpips:
                 # ======================================================\n\n\n
@@ -435,10 +438,8 @@ class Carla(Dataset):
 
         # elif self.split == 'val': # create data for each image separately
         elif self.split == "val":
-            if self.eval_inference is not None:
-                instance_dir = self.data[0]
-            else:
-                instance_dir = self.data[idx]
+
+            instance_dir = self.data[idx]
 
             # Load destination view data
             (
@@ -451,7 +452,8 @@ class Carla(Dataset):
                 src_focal,
                 src_c,
                 superv_imgs
-            ) = self.read_data(instance_dir, idx=np.random.randint(0,19)) # random view
+            ) = self.read_data(instance_dir) # random view
+            # ) = self.read_data(instance_dir, idx=np.random.randint(0,19)) # random view
 
             H, W, _ = np.array(superv_imgs[0]).shape
             camera_radii = torch.FloatTensor(radii)
@@ -459,14 +461,29 @@ class Carla(Dataset):
             cam_view_dirs = torch.FloatTensor(view_dirs)
             cam_rays_d = torch.FloatTensor(rays_d)
 
-            img_gt = Image.fromarray(np.uint8(superv_imgs[0]))
-            img_gt = T.ToTensor()(img_gt) # 4,600,800
-            rgbs = img_gt.permute(1, 2, 0)[...,:3].view(-1,3)
 
+
+            rgbs = []
+            for superv_img in superv_imgs:
+                img_gt = Image.fromarray(np.uint8(superv_img))
+                img_gt = T.ToTensor()(img_gt)
+                rgb = img_gt.permute(1, 2, 0).flatten(0, 1)[...,:3]
+                rgbs.append(rgb)
+            # img_gt = Image.fromarray(np.uint8(superv_imgs[0]))
+            # img_gt = T.ToTensor()(img_gt) # 4,600,800
+            # rgbs = img_gt.permute(1, 2, 0)[...,:3].view(-1,3)
+            
             radii = camera_radii.view(-1)
-            rays = cam_rays.view(-1, 3)
-            rays_d = cam_rays_d.view(-1, 3)
-            view_dirs = cam_view_dirs.view(-1, 3)
+            rays = cam_rays.view(-1, cam_rays.shape[-1])
+            rays_d = cam_rays_d.view(-1, cam_rays_d.shape[-1])
+            view_dirs = cam_view_dirs.view(-1, cam_view_dirs.shape[-1])
+            rgbs = torch.stack(rgbs) # (20, 120000,3)
+            rgbs = rgbs.view(-1, 3) # (2400000, 3) [0->1]
+
+            # radii = camera_radii.view(-1)
+            # rays = cam_rays.view(-1, 3)
+            # rays_d = cam_rays_d.view(-1, 3)
+            # view_dirs = cam_view_dirs.view(-1, 3)
 
             imgs = []
             for img in src_imgs:
@@ -495,6 +512,9 @@ class Carla(Dataset):
                 sample["radii"] = radii
                 sample["multloss"] = torch.zeros((sample["rays_o"].shape[0], 1))
                 sample["normals"] = torch.zeros_like(sample["rays_o"])
+                sample["idx"] = idx
 
             return sample
+        else:
+            pass
 

@@ -143,7 +143,7 @@ def main(hparams):
             resume_from_checkpoint=ckpt_path,
             logger=wandb_logger,
             enable_model_summary=True,
-            accelerator="gpu",
+            accelerator="gpu" if hparams.num_gpus > 0 else 'cpu',
             # gradient_clip_val = 0.5,
             devices=hparams.num_gpus,
             num_sanity_val_steps=1,
@@ -162,7 +162,7 @@ def main(hparams):
                 f"ckpts/{hparams.exp_name}/{hparams.ckpt_path}"
             )
         else:
-            ckpt_path = f"ckpts/{hparams.exp_name}/last.ckpt"
+            ckpt_path = hparams.ckpt_path
         trainer.test(system, ckpt_path=ckpt_path)
     elif hparams.run_eval:
         trainer.test(system, ckpt_path=hparams.ckpt_path)

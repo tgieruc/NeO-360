@@ -23,6 +23,7 @@ from utils.train_helper import *
 from models.vanilla_nerf.util import *
 from models.vanilla_nerf.encoder import *
 import wandb
+import cv2
 import random
 from models.utils import store_image,store_depth_img, store_depth_raw, write_stats, get_obj_rgbs_from_segmap
 
@@ -278,10 +279,8 @@ class LitPixelNeRF(LitModel):
 
         eval_inference = self.hparams.render_name
         if eval_inference is not None:
-            num = int(eval_inference[0])
             self.model = PixelNeRF(num_src_views = 6)
         elif self.hparams.is_optimize is not None:
-            num = int(self.hparams.is_optimize[0])
             self.model = PixelNeRF(num_src_views = 6)
         else:
             self.model = PixelNeRF(num_src_views = 6)
@@ -293,15 +292,18 @@ class LitPixelNeRF(LitModel):
             train_data_loader = dict(
                 pickled = False,
                 # phase = "all",
-                phase = "train",
+                phase = "full",
                 batch_size = 1,
                 shuffle = False,
                 num_workers = 12,
                 # town = ["Town02"],
-                town = ["Town01", "Town03", "Town04", "Town05", "Town06", "Town07", "Town10HD"],
+                # town = ["Town01", "Town03", "Town04", "Town05", "Town06", "Town07", "Town10HD"],
+                town = ["Town02_ring"],
                 weather  = ["ClearNoon"],
                 vehicle = ["vehicle.tesla.invisible"],
-                spawn_point = ["all"],
+                spawn_point = [7, 12, 48, 98, 66],
+
+                # spawn_point = ["all"],
                 # spawn_point = ["all"],
                 step = [0],
                 selection = ["input_images", "sphere_dataset"],
@@ -310,7 +312,7 @@ class LitPixelNeRF(LitModel):
             val_data_loader = dict(
                 pickled = False,
                 # phase = "all",
-                phase = "val",
+                phase = "test",
                 batch_size = 1,
                 shuffle = False,
                 num_workers = 12,
@@ -318,8 +320,9 @@ class LitPixelNeRF(LitModel):
                 # town = ["Town01", "Town03", "Town04", "Town05", "Town06", "Town07", "Town10HD"],
                 weather  = ["ClearNoon"],
                 vehicle = ["vehicle.tesla.invisible"],
-                spawn_point = [7, 12, 48, 98, 66],
-                # spawn_point = ["all"],
+                # spawn_point = [7, 12, 48, 98, 66],
+                # spawn_point = [7],
+                spawn_point = ["all"],
                 step = [0],
                 selection = ["input_images", "sphere_dataset"],
                 factor = 0.25
@@ -445,7 +448,7 @@ class LitPixelNeRF(LitModel):
         for i in range(0, B, self.hparams.chunk):
             batch_chunk = dict()
             for k, v in batch.items():
-                if k == 'src_imgs' or k =='src_poses' or k =='src_focal' or k=='src_c':
+                if k == 'src_imgs' or k =='src_poses' or k =='src_focal' or k=='src_c' or k=="idx":
                    batch_chunk[k] = v 
                 elif k =='radii':
                     batch_chunk[k] = v[:, i : i + self.hparams.chunk]
@@ -465,6 +468,24 @@ class LitPixelNeRF(LitModel):
         test_output["depth"] = ret["depth"]
         # test_output["instance_mask"] = batch["instance_mask"]
         test_output["rgb"] = ret["comp_rgb"]
+        if not os.path.exists(os.path.join("eval",self.hparams["render_name"])):
+            os.makedirs(os.path.join("eval",self.hparams["render_name"]))
+        w,h = self.hparams["img_wh"][0], self.hparams["img_wh"][1]
+
+        rgbs = ret["comp_rgb"].view(-1, h,w,3)
+        gts = batch["target"].view(-1,h,w,3)
+        depths = ret["depth"].view(-1,h,w)
+
+        rgbs = (255*rgbs).int()
+        gts = (255*gts).int()
+
+        for i, (rgb, gt, depth)in enumerate(zip(rgbs, gts, depths)):
+            # rgb = cv2.cvtColor(rgb.cpu().numpy(), cv2.COLOR_RGB2BGR)
+            # gt = cv2.cvtColor(gt.cpu().numpy(), cv2.COLOR_RGB2BGR)
+            cv2.imwrite(os.path.join("eval",self.hparams["render_name"],f"{batch['idx']}_{i}.png"), rgb.cpu().numpy()[...,::-1])
+            cv2.imwrite(os.path.join("eval",self.hparams["render_name"],f"{batch['idx']}_{i}gt.png"), gt.cpu().numpy()[...,::-1])
+            np.save(os.path.join("eval",self.hparams["render_name"],f"{batch['idx']}_{i}depth.npy"), depth.cpu().numpy())
+
         return test_output
 
     def on_validation_start(self):
